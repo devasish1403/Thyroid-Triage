@@ -181,7 +181,9 @@ class TriageWorkflow:
             # ============================================================
             print("→ STEP 1C: Conformal Prediction Calibration")
             try:
-                prob_vector = {0: 1.0 - risk_result.risk_score, 1: risk_result.risk_score}
+                prob_vector = risk_result.class_probabilities
+                if not prob_vector:
+                    prob_vector = {0: 1.0 - risk_result.risk_score, 1: risk_result.risk_score}
                 conformal_result = self.conformal_wrapper.get_prediction_set(prob_vector)
                 print(f"  Prediction Set: {conformal_result['prediction_set']} at {conformal_result['coverage_level']*100:.0f}% coverage")
             except Exception as e:

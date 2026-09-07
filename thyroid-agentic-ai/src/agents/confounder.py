@@ -20,7 +20,7 @@ class ConfounderAgent:
         
         # safely handle case insensitivity / missing values
         tsh = patient.get("tsh", patient.get("TSH", None))
-        ft4 = patient.get("fti", patient.get("FTI", None))
+        ft4 = patient.get("fti", patient.get("FTI", patient.get("tt4", patient.get("TT4", None))))
         t3 = patient.get("t3", patient.get("T3", None))
         illness_context = patient.get("illness_flag", patient.get("sick", False))
 
@@ -28,8 +28,10 @@ class ConfounderAgent:
         # If any essential values are missing, skip rules requiring them.
         
         # Rule 1 — biotin/assay interference
-        if tsh is not None and ft4 is not None and t3 is not None:
-            if self.TSH_LOW <= tsh <= self.TSH_HIGH and (ft4 > self.FT4_HIGH or t3 > self.T3_HIGH):
+        if tsh is not None and (ft4 is not None or t3 is not None):
+            ft4_val = ft4 if ft4 is not None else 0
+            t3_val = t3 if t3 is not None else 0
+            if self.TSH_LOW <= tsh <= self.TSH_HIGH and (ft4_val > self.FT4_HIGH or t3_val > self.T3_HIGH):
                 flags.append({
                     "interference_type": "biotin_or_assay_interference",
                     "confidence": self._confidence(ft4, t3),
@@ -67,7 +69,9 @@ class ConfounderAgent:
 
     def _confidence(self, ft4: float, t3: float) -> str:
         # simple magnitude-based bucketing
-        deviation = max(ft4 - self.FT4_HIGH, t3 - self.T3_HIGH, 0)
+        ft4_val = ft4 if ft4 is not None else self.FT4_HIGH
+        t3_val = t3 if t3 is not None else self.T3_HIGH
+        deviation = max(ft4_val - self.FT4_HIGH, t3_val - self.T3_HIGH, 0)
         if deviation > 1.0:
             return "high"
         elif deviation > 0.3:

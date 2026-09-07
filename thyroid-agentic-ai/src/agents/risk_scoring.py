@@ -25,6 +25,7 @@ class RiskScore:
     confidence: float  # Model confidence 0-1
     uncertainty_flags: List[str]  # Issues encountered
     is_confident: bool  # True if confidence > threshold
+    class_probabilities: dict = None  # Full probability vector for conformal prediction
 
 
 class RiskScoringAgent:
@@ -134,23 +135,33 @@ class RiskScoringAgent:
             prediction = self.model.predict(patient_transformed)[0]
             probabilities = self.model.predict_proba(patient_transformed)[0]
             
-            # Risk score is probability of high risk (class 1)
-            risk_score = probabilities[1]
+            # Extract full probability vector (handles 2 or 3 classes)
+            class_probs = {i: float(prob) for i, prob in enumerate(probabilities)}
+            
+            # Risk score is probability of abnormality (Medium + High Risk, if applicable)
+            if len(probabilities) == 3:
+                risk_score = probabilities[1] * 0.5 + probabilities[2]
+            else:
+                risk_score = probabilities[1]
             confidence = probabilities.max()
             
-            # If ML confidence is too low, use enhanced clinical calculator instead
-            if confidence < self.CONFIDENCE_THRESHOLD:
-                uncertainty_flags.append(f"ML confidence too low ({confidence:.2f})")
+            # Extract patient data as dict for sanity check
+            if isinstance(patient_data, pd.DataFrame):
+                patient_dict = patient_data.iloc[0].to_dict()
+            else:
+                patient_dict = patient_data
+                
+            # Use comprehensive hormone-based risk to sanity-check ML
+            rule_risk, rule_explanations = EnhancedRiskCalculator.calculate_comprehensive_risk(patient_dict)
+
+            # If ML confidence is too low, OR ML predicts Low Risk but Clinical Rules say High Risk (override false negatives)
+            if confidence < self.CONFIDENCE_THRESHOLD or (prediction == 0 and rule_risk >= 0.70):
+                if confidence < self.CONFIDENCE_THRESHOLD:
+                    uncertainty_flags.append(f"ML confidence too low ({confidence:.2f})")
+                else:
+                    uncertainty_flags.append(f"Clinical rules override: ML false negative detected")
                 uncertainty_flags.append("Using enhanced clinical assessment")
                 
-                # Extract patient data as dict
-                if isinstance(patient_data, pd.DataFrame):
-                    patient_dict = patient_data.iloc[0].to_dict()
-                else:
-                    patient_dict = patient_data
-                
-                # Use comprehensive hormone-based risk
-                rule_risk, rule_explanations = EnhancedRiskCalculator.calculate_comprehensive_risk(patient_dict)
                 uncertainty_flags.extend(rule_explanations)
                 
                 return RiskScore(
@@ -158,7 +169,8 @@ class RiskScoringAgent:
                     risk_class=int(rule_risk > 0.5),
                     confidence=0.75,  # Clinical guidelines are reliable
                     uncertainty_flags=uncertainty_flags,
-                    is_confident=True
+                    is_confident=True,
+                    class_probabilities={0: 1.0 - rule_risk, 1: 0.0, 2: rule_risk}
                 )
             
             # ML confidence is good - use ML prediction
@@ -169,7 +181,8 @@ class RiskScoringAgent:
                 risk_class=int(prediction),
                 confidence=float(confidence),
                 uncertainty_flags=uncertainty_flags,
-                is_confident=is_confident
+                is_confident=is_confident,
+                class_probabilities=class_probs
             )
             
         except Exception as e:
@@ -192,7 +205,8 @@ class RiskScoringAgent:
                 risk_class=int(rule_risk > 0.5),
                 confidence=0.75,  # Clinical guidelines are reliable
                 uncertainty_flags=uncertainty_flags,
-                is_confident=True
+                is_confident=True,
+                class_probabilities={0: 1.0 - rule_risk, 1: 0.0, 2: rule_risk}
             )
 
     def _fill_missing_features(self, df: pd.DataFrame) -> pd.DataFrame:
